@@ -19,14 +19,10 @@ defmodule Teiserver.Battle.Balance.SplitPros do
   alias Teiserver.Battle.Balance.SplitProsTypes, as: SP
 
   @max_iters 200
-  @lambda 2.0     # strength of hoarding penalty
-  @bin_margin 1   # tolerance margin for bin imbalance
+  @lambda 2.0
+  @bin_margin 1
 
-  @spec perform([BT.expanded_group()], non_neg_integer(), keyword()) :: %{
-          team_groups: map(),
-          team_players: map(),
-          logs: [String.t()]
-        }
+  @spec perform([BT.expanded_group()], non_neg_integer(), keyword()) :: SP.result()
   def perform(expanded_group, team_count, _opts \\ []) do
     if team_count != 2 do
       raise ArgumentError, "split_pros only supports 2 teams"
@@ -42,23 +38,23 @@ defmodule Teiserver.Battle.Balance.SplitPros do
             uncertainties: uncertainties
           } <- expanded_group,
           {id, rating, name, rank, sigma} <- Enum.zip([members, ratings, names, ranks, uncertainties]) do
-        %{id: id, name: name, rating: rating, rank: rank, uncertainty: sigma}
+        %{
+          id: id,
+          name: name,
+          rating: rating,
+          rank: rank,
+          uncertainty: sigma
+        } :: SP.player()
       end
 
     {team_a, team_b, seed_logs} = seed(players)
     {final_a, final_b, opt_logs} = improve_until_local_optimum(players, team_a, team_b, @max_iters)
 
     %{
-      team_groups: %{
-        1 => to_team_groups(final_a),
-        2 => to_team_groups(final_b)
-      },
-      team_players: %{
-        1 => Enum.map(final_a, & &1.id),
-        2 => Enum.map(final_b, & &1.id)
-      },
+      first_team: final_a,
+      second_team: final_b,
       logs: seed_logs ++ opt_logs ++ summarize(final_a, final_b)
-    }
+    } :: SP.result()
   end
 
   # --- Seeding (anchors + closest above/below + greedy draft) ---
@@ -187,12 +183,6 @@ defmodule Teiserver.Battle.Balance.SplitPros do
 
   defp replace(list, old, new),
     do: [new | Enum.reject(list, &(&1.id == old.id))] |> Enum.sort_by(& &1.rating, :desc)
-
-  defp to_team_groups(team) do
-    Enum.map(team, fn x ->
-      %{members: [x.id], count: 1, group_rating: x.rating, ratings: [x.rating]}
-    end)
-  end
 
   defp summarize(a, b) do
     cb = most_common_bin(a ++ b)
